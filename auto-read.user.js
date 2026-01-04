@@ -8,7 +8,6 @@
 // @grant        unsafeWindow
 // @license      MIT
 // @icon         https://www.google.com/s2/favicons?domain=linux.do
-// @require      https://cdn.tailwindcss.com
 // ==/UserScript==
 
 (() => {
@@ -288,8 +287,64 @@
          * 创建控制面板
          */
         createControlPanel() {
-            const controls = document.createElement('div'); // 容器元素
-            controls.className = 'fixed bottom-4 left-4 z-50 bg-white flex flex-col gap-2'; // 样式
+            const host = document.createElement('div'); // Shadow host
+            host.id = 'auto-read-root';
+            const shadowRoot = host.attachShadow({ mode: 'open' });
+            this.uiRoot = shadowRoot;
+
+            shadowRoot.innerHTML = `
+                <style>
+                    :host { all: initial; }
+                    .panel {
+                        position: fixed;
+                        bottom: 16px;
+                        left: 16px;
+                        z-index: 9999;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 8px;
+                        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                    }
+                    .btn {
+                        padding: 8px 16px;
+                        border-radius: 10px;
+                        border: 1px solid #e5e7eb;
+                        background: #ffffff;
+                        color: #111827;
+                        font-weight: 700;
+                        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+                        cursor: pointer;
+                        transition: transform 0.2s ease, box-shadow 0.2s ease;
+                    }
+                    .btn:hover {
+                        transform: scale(1.04);
+                        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+                    }
+                    .status {
+                        position: fixed;
+                        top: 80px;
+                        left: 20px;
+                        z-index: 9999;
+                        background: #ffffff;
+                        border-radius: 10px;
+                        padding: 8px 10px;
+                        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                        font-size: 12px;
+                        color: #111827;
+                    }
+                    .status strong { font-weight: 700; }
+                    .ok { color: #16a34a; font-weight: 700; }
+                    .bad { color: #dc2626; font-weight: 700; }
+                </style>
+                <div class="panel" id="auto-read-controls"></div>
+                <div class="status" id="auto-read-status"></div>
+            `;
+
+            const controls = shadowRoot.getElementById('auto-read-controls'); // 容器元素
 
             // 创建阅读控制按钮
             this.createControlButton(controls, 'openRead', '开始阅读', '停止阅读', () => {
@@ -297,7 +352,7 @@
                 this.state.saveToStorage();                   // 保存状态
                 this.state.isReading ? this.processCurrentPage() : this.stopScrolling();// 根据状态执行相应操作
                 this.updateStatus();// 更新状态
-                document.getElementById('openRead').textContent = this.state.isReading ? '停止阅读' : '开始阅读';// 更新按钮文本
+                this.uiRoot.getElementById('openRead').textContent = this.state.isReading ? '停止阅读' : '开始阅读';// 更新按钮文本
             });
 
             // 创建点赞控制按钮
@@ -305,7 +360,7 @@
                 this.state.isLiking = !this.state.isLiking; // 切换点赞状态
                 this.state.saveToStorage();                 // 保存状态
                 this.updateStatus(); // 更新状态
-                document.getElementById('openUP').textContent = this.state.isLiking ? '禁用点赞' : '启用点赞';// 更新按钮文本
+                this.uiRoot.getElementById('openUP').textContent = this.state.isLiking ? '禁用点赞' : '启用点赞';// 更新按钮文本
             });
 
             // 创建重置列表按钮
@@ -317,14 +372,9 @@
             });
 
             // 创建状态显示面板
-            const status = document.createElement('div'); // 状态面板
-            status.id = 'auto-read-status'; // 唯一ID
-            // 在按钮的上面显示，并且在左侧顶上
-            status.className = 'fixed top-20 left-5 z-9999 bg-white shadow-lg rounded-lg p-2 flex flex-col gap-1';
-            controls.appendChild(status); // 添加到控制面板
             this.updateStatus(); // 初始化状态显示
 
-            document.body.appendChild(controls); // 添加到页面
+            document.body.appendChild(host); // 添加到页面
         }
 
         /**
@@ -339,7 +389,7 @@
             const button = document.createElement('button'); // 创建按钮元素
             // 基础样式
             button.id = id;
-            button.className = 'px-4 py-2 rounded-lg shadow-lg hover:scale-105 transition-all duration-300 bg-white text-black font-bold';
+            button.className = 'btn';
             // 初始文本（根据当前状态判断）
             button.textContent = this.state.isReading && startText === '开始阅读' ? stopText : startText;
             button.addEventListener('click', onClick); // 绑定点击事件
@@ -350,18 +400,18 @@
          * 更新状态显示面板
          */
         updateStatus() {
-            const status = document.getElementById('auto-read-status');
+            const status = this.uiRoot?.getElementById('auto-read-status');
             if (!status) return; // 面板不存在时返回
 
             const likeCount = parseInt(localStorage.getItem('likeCount')) || 0; // 获取点赞计数
             // 使用模板字符串更新面板内容
             status.innerHTML = `
-                <div class="font-bold text-sm">
-                    阅读状态：${this.state.isReading ? '<span class="text-green-600">运行中</span>' : '<span class="text-red-600">已停止</span>'}<br />
-                    点赞状态：${this.state.isLiking ? '<span class="text-green-600">启用</span>' : '<span class="text-red-600">禁用</span>'}<br />
+                <div>
+                    阅读状态：${this.state.isReading ? '<span class="ok">运行中</span>' : '<span class="bad">已停止</span>'}<br />
+                    点赞状态：${this.state.isLiking ? '<span class="ok">启用</span>' : '<span class="bad">禁用</span>'}<br />
                     今日点赞：${likeCount}/${CONFIG.LIKE_LIMIT}<br />
                     剩余帖子：${this.state.unseenHrefs.length}<br />
-                    错误重试：<span class="text-red-600">${this.state.errorRetries}/${CONFIG.MAX_RETRIES}</span>
+                    错误重试：<span class="bad">${this.state.errorRetries}/${CONFIG.MAX_RETRIES}</span>
                 </div>
             `;
         }
