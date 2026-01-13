@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         Auto Read (Linux.do Only)
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.4.1
 // @description  自动刷阅读回复，仅支持Linux.do社区
 // @author       XinSong(https://blog.warhut.cn)自
 // @match        https://linux.do/*
 // @grant        unsafeWindow
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // @license      MIT
 // @icon         https://www.google.com/s2/favicons?domain=linux.do
 // ==/UserScript==
@@ -15,14 +19,14 @@
     // 挂载全局对象（避免作用域污染）
     const { document, window } = unsafeWindow;
 
-    // 配置中心（常量集中管理）
-    const CONFIG = {
+    // 默认配置（首次运行时使用）
+    const DEFAULT_CONFIG = {
         BASE_URL: 'https://linux.do',          // 基础URL
         LIKE_LIMIT: 20,                      // 每日点赞上限
         MAX_RETRIES: 3,                      // 错误页面最大重试次数
         SCROLL_OPTIONS: {                    // 滚动配置
             speed: 50,                       // 滚动速度（像素/次）
-            interval: 100,                   // 滚动间隔（毫秒）
+            interval: 1000,                  // 滚动间隔（毫秒）
         },
         LIKE_INTERVAL: {                     // 点赞间隔配置
             min: 2000,                       // 最小间隔（毫秒）
@@ -30,6 +34,25 @@
         },
         UPDATE_INTERVAL: 500                // 状态更新间隔（毫秒）
     };
+
+    // 从GM存储加载配置（如果不存在则使用默认值）
+    const loadConfig = () => {
+        const savedConfig = GM_getValue('userConfig');
+        if (savedConfig) {
+            return JSON.parse(savedConfig);
+        }
+        // 首次运行，保存默认配置
+        GM_setValue('userConfig', JSON.stringify(DEFAULT_CONFIG));
+        return DEFAULT_CONFIG;
+    };
+
+    // 保存配置到GM存储
+    const saveConfig = (config) => {
+        GM_setValue('userConfig', JSON.stringify(config));
+    };
+
+    // 加载配置
+    const CONFIG = loadConfig();
 
     /**
      * 状态管理类
@@ -45,37 +68,39 @@
         initState() {
             this.isReading = false;        // 是否正在阅读
             this.isLiking = false;         // 是否启用自动点赞
+            this.isPanelHidden = false;    // 是否隐藏面板
             this.errorRetries = 0;         // 错误页面重试次数
             this.unseenHrefs = [];         // 未读帖子链接列表
             this.currentTask = null;       // 当前任务（导航/滚动等）
             this.scrollTimer = null;       // 滚动定时器
         }
 
-        // 从localStorage加载状态
+        // 从GM存储加载状态
         loadFromStorage() {
             // 解析存储的状态对象，默认空对象
-            const state = JSON.parse(localStorage.getItem('autoReadState')) || {};
+            const state = JSON.parse(GM_getValue('autoReadState', '{}'));
             // 合并默认状态与存储状态
             Object.assign(this, {
                 isReading: !!state.isReading,        // 布尔值转换
                 isLiking: state.isLiking ?? false,    // 安全默认值
+                isPanelHidden: state.isPanelHidden ?? false, // 面板隐藏状态
                 errorRetries: state.errorRetries || 0,
                 unseenHrefs: state.unseenHrefs || []
             });
             this.resetLikeCounter();  // 重置每日点赞计数
         }
 
-        // 保存状态到localStorage
+        // 保存状态到GM存储
         saveToStorage() {
-            localStorage.setItem('autoReadState', JSON.stringify(this));
+            GM_setValue('autoReadState', JSON.stringify(this));
         }
 
         // 每日点赞计数重置（超过24小时）
         resetLikeCounter() {
-            const lastUpdate = localStorage.getItem('likeTimestamp');
+            const lastUpdate = GM_getValue('likeTimestamp');
             if (lastUpdate && Date.now() - +lastUpdate > 86400000) { // 86400000ms = 24小时
-                localStorage.setItem('likeCount', 0);       // 重置计数
-                localStorage.setItem('likeTimestamp', Date.now()); // 更新时间戳
+                GM_setValue('likeCount', 0);       // 重置计数
+                GM_setValue('likeTimestamp', Date.now()); // 更新时间戳
             }
         }
     }
@@ -238,7 +263,7 @@
          * 自动点赞逻辑（递归调用实现随机间隔）
          */
         runAutoLike() {
-            const likeCount = parseInt(localStorage.getItem('likeCount')) || 0; // 当前点赞数
+            const likeCount = parseInt(GM_getValue('likeCount', 0)); // 当前点赞数
             if (likeCount >= CONFIG.LIKE_LIMIT) return; // 达到上限则停止
 
             // 查找未点赞的按钮（优先使用明确的选择器）
@@ -246,8 +271,8 @@
             if (likeButton) {
                 likeButton.click(); // 模拟点击
                 // 更新点赞计数和时间戳
-                localStorage.setItem('likeCount', likeCount + 1);
-                localStorage.setItem('likeTimestamp', Date.now());
+                GM_setValue('likeCount', likeCount + 1);
+                GM_setValue('likeTimestamp', Date.now());
                 // 生成随机间隔（递归调用实现链式延迟）
                 const randomDelay = Math.random() * (CONFIG.LIKE_INTERVAL.max - CONFIG.LIKE_INTERVAL.min) + CONFIG.LIKE_INTERVAL.min;
                 setTimeout(() => this.runAutoLike(), randomDelay);
@@ -304,6 +329,12 @@
                         flex-direction: column;
                         gap: 8px;
                         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                        transition: opacity 0.3s ease, transform 0.3s ease;
+                    }
+                    .panel.hidden {
+                        opacity: 0;
+                        transform: translateX(-100%);
+                        pointer-events: none;
                     }
                     .btn {
                         padding: 8px 16px;
@@ -335,6 +366,12 @@
                         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
                         font-size: 12px;
                         color: #111827;
+                        transition: opacity 0.3s ease, transform 0.3s ease;
+                    }
+                    .status.hidden {
+                        opacity: 0;
+                        transform: translateX(-100%);
+                        pointer-events: none;
                     }
                     .status strong { font-weight: 700; }
                     .ok { color: #16a34a; font-weight: 700; }
@@ -371,10 +408,221 @@
                 }
             });
 
+            // 创建隐藏面板按钮
+            this.createControlButton(controls, 'hidePanel', '隐藏面板', '隐藏面板', () => {
+                this.togglePanel();
+            });
+
+            // 创建配置中心按钮
+            this.createControlButton(controls, 'configCenter', '配置中心', '配置中心', () => {
+                this.openConfigDialog();
+            });
+
             // 创建状态显示面板
             this.updateStatus(); // 初始化状态显示
 
+            // 应用初始隐藏状态
+            this.applyPanelVisibility();
+
+            // 注册脚本菜单命令
+            this.registerMenuCommands();
+
             document.body.appendChild(host); // 添加到页面
+        }
+
+        /**
+         * 注册Tampermonkey菜单命令
+         */
+        registerMenuCommands() {
+            // 保存菜单命令ID以便后续更新
+            this.menuCommandId = GM_registerMenuCommand(
+                this.state.isPanelHidden ? '📱 显示面板' : '🙈 隐藏面板',
+                () => {
+                    this.togglePanel();
+                    // 注销旧菜单命令并重新注册
+                    if (this.menuCommandId) {
+                        GM_unregisterMenuCommand(this.menuCommandId);
+                    }
+                    this.registerMenuCommands();
+                }
+            );
+        }
+
+        /**
+         * 切换面板显示/隐藏
+         */
+        togglePanel() {
+            this.state.isPanelHidden = !this.state.isPanelHidden;
+            this.state.saveToStorage();
+            this.applyPanelVisibility();
+        }
+
+        /**
+         * 应用面板可见性状态
+         */
+        applyPanelVisibility() {
+            const panel = this.uiRoot?.getElementById('auto-read-controls');
+            const status = this.uiRoot?.getElementById('auto-read-status');
+
+            if (this.state.isPanelHidden) {
+                panel?.classList.add('hidden');
+                status?.classList.add('hidden');
+            } else {
+                panel?.classList.remove('hidden');
+                status?.classList.remove('hidden');
+            }
+        }
+
+        /**
+         * 打开配置对话框
+         */
+        openConfigDialog() {
+            const dialogHTML = `
+                <div style="
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: white;
+                    padding: 24px;
+                    border-radius: 12px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    z-index: 10000;
+                    min-width: 400px;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                ">
+                    <h3 style="margin: 0 0 20px 0; color: #111827;">⚙️ 配置中心</h3>
+
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 6px; color: #6b7280; font-weight: 600; font-size: 13px;">
+                            每日点赞上限
+                        </label>
+                        <input type="number" id="config-like-limit" value="${CONFIG.LIKE_LIMIT}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 6px; color: #6b7280; font-weight: 600; font-size: 13px;">
+                            错误重试次数
+                        </label>
+                        <input type="number" id="config-max-retries" value="${CONFIG.MAX_RETRIES}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 6px; color: #6b7280; font-weight: 600; font-size: 13px;">
+                            滚动速度（像素/次）
+                        </label>
+                        <input type="number" id="config-scroll-speed" value="${CONFIG.SCROLL_OPTIONS.speed}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 6px; color: #6b7280; font-weight: 600; font-size: 13px;">
+                            滚动间隔（毫秒）
+                        </label>
+                        <input type="number" id="config-scroll-interval" value="${CONFIG.SCROLL_OPTIONS.interval}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 6px; color: #6b7280; font-weight: 600; font-size: 13px;">
+                            点赞最小间隔（毫秒）
+                        </label>
+                        <input type="number" id="config-like-min" value="${CONFIG.LIKE_INTERVAL.min}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 6px; color: #6b7280; font-weight: 600; font-size: 13px;">
+                            点赞最大间隔（毫秒）
+                        </label>
+                        <input type="number" id="config-like-max" value="${CONFIG.LIKE_INTERVAL.max}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    </div>
+
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button id="config-cancel" style="
+                            padding: 8px 20px;
+                            border: 1px solid #d1d5db;
+                            background: white;
+                            color: #6b7280;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-weight: 600;
+                            font-size: 14px;
+                        ">取消</button>
+                        <button id="config-save" style="
+                            padding: 8px 20px;
+                            border: none;
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            color: white;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-weight: 600;
+                            font-size: 14px;
+                        ">保存</button>
+                    </div>
+                </div>
+
+                <div id="config-overlay" style="
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.5);
+                    z-index: 9999;
+                "></div>
+            `;
+
+            // 创建对话框容器
+            const dialogContainer = document.createElement('div');
+            dialogContainer.id = 'config-dialog-container';
+            dialogContainer.innerHTML = dialogHTML;
+            document.body.appendChild(dialogContainer);
+
+            // 绑定按钮事件
+            document.getElementById('config-save').addEventListener('click', () => {
+                this.saveConfigFromDialog();
+                document.body.removeChild(dialogContainer);
+            });
+
+            document.getElementById('config-cancel').addEventListener('click', () => {
+                document.body.removeChild(dialogContainer);
+            });
+
+            document.getElementById('config-overlay').addEventListener('click', () => {
+                document.body.removeChild(dialogContainer);
+            });
+        }
+
+        /**
+         * 从对话框保存配置
+         */
+        saveConfigFromDialog() {
+            const newConfig = {
+                BASE_URL: CONFIG.BASE_URL,
+                LIKE_LIMIT: parseInt(document.getElementById('config-like-limit').value),
+                MAX_RETRIES: parseInt(document.getElementById('config-max-retries').value),
+                SCROLL_OPTIONS: {
+                    speed: parseInt(document.getElementById('config-scroll-speed').value),
+                    interval: parseInt(document.getElementById('config-scroll-interval').value),
+                },
+                LIKE_INTERVAL: {
+                    min: parseInt(document.getElementById('config-like-min').value),
+                    max: parseInt(document.getElementById('config-like-max').value),
+                },
+                UPDATE_INTERVAL: CONFIG.UPDATE_INTERVAL
+            };
+
+            // 保存到GM存储
+            saveConfig(newConfig);
+
+            // 更新全局CONFIG对象
+            Object.assign(CONFIG, newConfig);
+
+            alert('配置已保存！刷新页面后生效。');
         }
 
         /**
@@ -403,7 +651,7 @@
             const status = this.uiRoot?.getElementById('auto-read-status');
             if (!status) return; // 面板不存在时返回
 
-            const likeCount = parseInt(localStorage.getItem('likeCount')) || 0; // 获取点赞计数
+            const likeCount = parseInt(GM_getValue('likeCount', 0)); // 获取点赞计数
             // 使用模板字符串更新面板内容
             status.innerHTML = `
                 <div>
