@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Auto Read (Linux.do Only)
 // @namespace    http://tampermonkey.net/
-// @version      2.4.1
+// @version      2.4.2
 // @description  自动刷阅读回复，仅支持Linux.do社区
 // @author       XinSong(https://blog.warhut.cn)自
 // @match        https://linux.do/*
@@ -25,11 +25,11 @@
         LIKE_LIMIT: 20,                      // 每日点赞上限
         MAX_RETRIES: 3,                      // 错误页面最大重试次数
         SCROLL_OPTIONS: {                    // 滚动配置
-            speed: 50,                       // 滚动速度（像素/次）
-            interval: 1000,                  // 滚动间隔（毫秒）
+            speed: 200,                      // 滚动速度（像素/次）
+            interval: 500,                   // 滚动间隔（毫秒）
         },
         LIKE_INTERVAL: {                     // 点赞间隔配置
-            min: 2000,                       // 最小间隔（毫秒）
+            min: 5000,                       // 最小间隔（毫秒）
             max: 5000                        // 最大间隔（毫秒）
         },
         UPDATE_INTERVAL: 500                // 状态更新间隔（毫秒）
