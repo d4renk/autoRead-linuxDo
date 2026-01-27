@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Auto Read (Linux.do Only)
 // @namespace    http://tampermonkey.net/
-// @version      2.4.2
+// @version      2.4.3
 // @description  自动刷阅读回复，仅支持Linux.do社区
 // @author       XinSong(https://blog.warhut.cn)自
 // @match        https://linux.do/*
@@ -197,22 +197,11 @@
         startSmoothScroll() {
             if (this.state.scrollTimer) return; // 避免重复启动
 
-            // 记录上一次滚动时间
-            let lastScrollTime = 0;
-            // 滚动速度（像素/帧）
+            // 滚动速度（像素/次）
             const scrollSpeed = CONFIG.SCROLL_OPTIONS.speed;
 
-            // 使用requestAnimationFrame实现平滑滚动
+            // 使用 setTimeout 实现滚动（支持后台运行）
             const scrollStep = () => {
-                let timestamp = performance.now(); // 获取当前时间戳
-
-                // 控制滚动频率，防止过快
-                if (timestamp - lastScrollTime < CONFIG.SCROLL_OPTIONS.interval) {
-                    this.state.scrollTimer = requestAnimationFrame(scrollStep);
-                    return;
-                }
-                lastScrollTime = timestamp; // 更新上一次滚动时间
-
                 window.scrollBy(0, scrollSpeed); // 执行滚动
 
                 // 判断是否阅读完毕
@@ -228,11 +217,13 @@
                 }
 
                 this.markReadPosts();           // 标记已读帖子
-                this.state.scrollTimer = requestAnimationFrame(scrollStep); // 继续下一帧
+                
+                // 设置下一次滚动
+                this.state.scrollTimer = setTimeout(scrollStep, CONFIG.SCROLL_OPTIONS.interval);
             };
 
-            // 开始滚动动画
-            this.state.scrollTimer = requestAnimationFrame(scrollStep);
+            // 开始滚动
+            scrollStep();
         }
 
         /**
@@ -240,7 +231,7 @@
          */
         stopScrolling() {
             if (this.state.scrollTimer) {
-                cancelAnimationFrame(this.state.scrollTimer); // 取消动画帧
+                clearTimeout(this.state.scrollTimer); // 取消定时器
                 this.state.scrollTimer = null;         // 重置定时器引用
             }
             this.state.currentTask = null;         // 清除当前任务
